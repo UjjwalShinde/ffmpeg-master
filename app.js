@@ -6,8 +6,7 @@ const readline = require("readline");
 AWS.config.update({ region: "ap-south-1" });
 const { Consumer } = require("sqs-consumer");
 var sqs = new AWS.SQS({ apiVersion: "2012-11-05" });
-var lambda = new AWS.Lambda({apiVersion: '2015-03-31'});
-
+var lambda = new AWS.Lambda({ apiVersion: "2015-03-31" });
 
 const { getVideoDurationInSeconds } = require("get-video-duration");
 // const { ConfigurationServicePlaceholders } = require("aws-sdk/lib/config_service_placeholders");
@@ -15,8 +14,10 @@ const { getVideoDurationInSeconds } = require("get-video-duration");
 var sendJobId = new Set();
 var receivedJobId = new Set();
 var sentVideosNames = [];
+var murgedVideos=new Set();
 
 const cancelJob = async (reason, i) => {
+  console.log("cancel job trigger");
   var params = {
     jobId: process.env.AWS_BATCH_JOB_ID,
     reason: reason,
@@ -31,7 +32,11 @@ const cancelJob = async (reason, i) => {
 };
 
 const deleteSQSqueue = async (url) => {
+  console.log("deleting queque");
+
   if (url) {
+    console.log("url found");
+
     var params = {
       QueueUrl: url /* required */,
     };
@@ -39,7 +44,7 @@ const deleteSQSqueue = async (url) => {
       .deleteQueue(params)
       .promise()
       .catch((e) => {
-        console.log(e);
+        console.log(e,"error while deleting queue");
       });
     console.log(response);
   }
@@ -84,18 +89,16 @@ const mergeviddeos = async (path, secondfile, i, n) => {
   ); // Get result after file ends
 };
 
-const sendSuccessResponse=async()=>{
+const sendSuccessResponse = async () => {
   var params = {
-    FunctionName: 'lambda_function_to_call_api', /* required */
-    Payload:JSON.stringify({
-      inputVideoName : process.env.inputVideoName,
-      outputVideoName : process.env.outputVideoName
-
-    })
-    
+    FunctionName: "lambda_function_to_call_api" /* required */,
+    Payload: JSON.stringify({
+      inputVideoName: process.env.inputVideoName,
+      outputVideoName: process.env.outputVideoName,
+    }),
   };
-   await lambda.invoke(params).promise();
-}
+  await lambda.invoke(params).promise();
+};
 
 const submitJob = (initialTime, endTime, i = 0, url, attempt) => {
   console.log(initialTime, " ", endTime);
@@ -104,10 +107,10 @@ const submitJob = (initialTime, endTime, i = 0, url, attempt) => {
 
   var params = {
     jobDefinition:
-      "arn:aws:batch:ap-south-1:907610416451:job-definition/toCheckParallelProcessing:1",
+      "arn:aws:batch:ap-south-1:907610416451:job-definition/slave-ffmpeg-definition:1",
     jobName: name.toString(),
     jobQueue:
-      "arn:aws:batch:ap-south-1:907610416451:job-queue/helloworldjobqueue",
+      "arn:aws:batch:ap-south-1:907610416451:job-queue/slave-ffmpeg-jobqueue",
     containerOverrides: {
       environment: [
         {
@@ -137,7 +140,10 @@ const submitJob = (initialTime, endTime, i = 0, url, attempt) => {
   };
   var batch = new AWS.Batch();
   batch.submitJob(params, function (err, data) {
-    console.log(data);
+    if (data) {
+      console.log("batch resonse submit", data);
+      sendJobId.add(data.jobId);
+    }
     if (err) {
       console.log(err, "error while submitting job");
       if (attempt < 1) submitJob(initialTime, endTime, i, url, attempt + 1); //reattempt to submit job
@@ -159,10 +165,11 @@ const videoDuration = async (path) => {
 };
 
 const init = async () => {
+  var i = 0;
   var params = {
     QueueName: uuidv4() /* required */,
   };
-  console.log("before queue")
+  console.log("before queue");
 
   const data = await sqs.createQueue(params).promise();
   console.log(data);
@@ -172,22 +179,38 @@ const init = async () => {
   const app = Consumer.create({
     queueUrl: url,
     handleMessage: async (message) => {
-      console.log("received message",message);
-        console.log("receivedjobid",
-        Array.from(receivedJobId.values())
-        )
+      if (i == 0) {
+        console.log("sendjobid", Array.from(sendJobId.values()));
+        i++;
+      }
+      console.log("received message", message);
+      console.log("receivedjobid", Array.from(receivedJobId.values()));
       if (sendJobId.has(message.Body)) {
+        console.log("message found in sendJobID");
         receivedJobId.add(message.Body);
         if (receivedJobId.size == sendJobId.size) {
+          console.log("size of received and sent id array are equal");
           for (index = 0; index < sentVideosNames.length; index++) {
-            path = process.env.S3_MOUNT_DIRECTORY_OUTPUT+'/' + sentVideosNames[index];;
-            secondpath = process.env.S3_MOUNT_DIRECTORY_OUTPUT+'/' + process.env.outputVideoName;
-            await mergeviddeos(path, secondpath, index, sentVideosNames.length - 1);
+            if(! murgedVideos.has(sentVideosNames[index])){ // check if video is merged already.
+
+            path = process.env.S3_MOUNT_DIRECTORY_OUTPUT + "/" + sentVideosNames[index];
+            secondpath = process.env.S3_MOUNT_DIRECTORY_OUTPUT +"/" + process.env.outputVideoName;
+            await mergeviddeos(
+              path,
+              secondpath,
+              index,
+              sentVideosNames.length - 1
+            );
+            murgedVideos.add(sentVideosNames[index]); //to track merged videos.
+          
+          }
           }
           await sendSuccessResponse();
           app.stop();
           await deleteSQSqueue(url);
         }
+      } else {
+        console.log("wrong message from slave");
       }
     },
   });
@@ -201,8 +224,8 @@ const init = async () => {
   });
 
   app.start();
-  var videoPath=process.env.S3_MOUNT_DIRECTORY_INPUT+'/'+process.env.inputVideoName
-
+  var videoPath =
+    process.env.S3_MOUNT_DIRECTORY_INPUT + "/" + process.env.inputVideoName;
 
   const promise = videoDuration(videoPath);
   promise
@@ -224,7 +247,8 @@ const init = async () => {
         endTime = endTime + 600;
         totalChildBatch++;
       } while (endTime < duration);
-      if (initialTime < duration) { // for submitting last batch job
+      if (initialTime < duration) {
+        // for submitting last batch job
         submitJob(
           formatTime(initialTime),
           formatTime(endTime),
@@ -234,11 +258,10 @@ const init = async () => {
         );
         totalChildBatch++;
       }
-      console.log("sendjobid",
-      Array.from(sendJobId.values())
-      )
+      console.log("sendjobid", Array.from(sendJobId.values()));
     })
-    .catch(async (e) => { //failed to get video duration
+    .catch(async (e) => {
+      //failed to get video duration
       if (app) {
         app.stop();
       }
@@ -251,9 +274,11 @@ const init = async () => {
 
 init();
 
-// flow of program :  
-    //create queue -> get video duration of video
-    //  -> submit multiple jobs in 10 mins interval 
-    //  -> get response as id of submitted jobs from child batch jobs 
-    //  -> check if all response came 
-    //  -> delete queque and trigger success lambda function
+// flow of program :
+//     create queue
+//  -> get video duration of video.
+//  -> submit multiple jobs in 10 mins interval.
+//  -> get response as id of submitted jobs from child batch jobs.
+//  -> check if all response came .
+//  -> merge all m3u8 output files to single m3u8 files.
+//  -> delete queque and trigger success lambda function.
