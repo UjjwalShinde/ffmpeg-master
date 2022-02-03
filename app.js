@@ -16,10 +16,13 @@ const cancelJob = async (reason, i) => {
     jobId: process.env.AWS_BATCH_JOB_ID,
     reason: reason,
   };
-  const response = await batch.cancelJob(params).promise().catch( async ()=>{
-    await cancelJob(reason, 1);
-  })
-    console.log(response);
+  const response = await batch
+    .cancelJob(params)
+    .promise()
+    .catch(async () => {
+      await cancelJob(reason, 1);
+    });
+  console.log(response);
 };
 
 const deleteSQSqueue = async (url) => {
@@ -27,8 +30,13 @@ const deleteSQSqueue = async (url) => {
     var params = {
       QueueUrl: url /* required */,
     };
-   const response = await sqs.deleteQueue(params).promise().catch(e=>{console.log(e)});
-   console.log(response);
+    const response = await sqs
+      .deleteQueue(params)
+      .promise()
+      .catch((e) => {
+        console.log(e);
+      });
+    console.log(response);
   }
 };
 
@@ -74,10 +82,10 @@ const mergeviddeos = async (path, secondfile, i, n) => {
   ); // Get result after file ends
 };
 
-const submitJob = (initialTime, endTime, i = 0, url,attempt) => {
+const submitJob = (initialTime, endTime, i = 0, url, attempt) => {
   console.log(initialTime, " ", endTime);
   const name = uuidv4();
-  sentVideosNames.push(i + process.env.outputVideoName);
+  sentVideosNames.push(i + process.env.outputVideoName); // kepp track of output video names of child batch jobs
 
   var params = {
     jobDefinition:
@@ -115,10 +123,9 @@ const submitJob = (initialTime, endTime, i = 0, url,attempt) => {
   var batch = new AWS.Batch();
   batch.submitJob(params, function (err, data) {
     console.log(data);
-    if(err){
-      console.log(err,"error while submitting job")
-      if(attempt<1)
-      submitJob(initialTime, endTime, i , url,attempt+1);
+    if (err) {
+      console.log(err, "error while submitting job");
+      if (attempt < 1) submitJob(initialTime, endTime, i, url, attempt + 1); //reattempt to submit job
     }
   });
 };
@@ -151,10 +158,10 @@ const init = async () => {
       if (sendJobId.has(message.Body)) {
         receivedJobId.add(message.Body);
         if (receivedJobId.size == sendJobId.size) {
-          for (k = 0; k < sentVideosNames.length; k++) {
-            path = "./" + sentVideosNames[k];
+          for (index = 0; index < sentVideosNames.length; index++) {
+            path = "./" + sentVideosNames[index];
             secondpath = "./" + process.env.outputVideoName;
-            mergeviddeos(path, secondpath, k, sentVideosNames.length - 1);
+            await mergeviddeos(path, secondpath, index, sentVideosNames.length - 1);
           }
           app.stop();
           await deleteSQSqueue(url);
@@ -193,7 +200,7 @@ const init = async () => {
         endTime = endTime + 600;
         totalChildBatch++;
       } while (endTime < duration);
-      if (initialTime < duration) {
+      if (initialTime < duration) { // for submitting last batch job
         submitJob(
           formatTime(initialTime),
           formatTime(endTime),
@@ -204,15 +211,22 @@ const init = async () => {
         totalChildBatch++;
       }
     })
-    .catch((e) => {
+    .catch((e) => { //failed to get video duration
       if (app) {
         app.stop();
       }
       await deleteSQSqueue(url);
 
-     await  cancelJob("video duration not found", 0);
+      await cancelJob("video duration not found", 0);
     });
 };
 // programm start here **************************
 
 init();
+
+// flow of program :  
+    //create queue -> get video duration of video
+    //  -> submit multiple jobs in 10 mins interval 
+    //  -> get response as id of submitted jobs from child batch jobs 
+    //  -> check if all response came 
+    //  -> delete queque and trigger success lambda function
