@@ -6,10 +6,15 @@ const readline = require("readline");
 AWS.config.update({ region: "ap-south-1" });
 const { Consumer } = require("sqs-consumer");
 var sqs = new AWS.SQS({ apiVersion: "2012-11-05" });
+var lambda = new AWS.Lambda({apiVersion: '2015-03-31'});
+
 
 const { getVideoDurationInSeconds } = require("get-video-duration");
 // const { ConfigurationServicePlaceholders } = require("aws-sdk/lib/config_service_placeholders");
-const { Console } = require("console");
+
+var sendJobId = new Set();
+var receivedJobId = new Set();
+var sentVideosNames = [];
 
 const cancelJob = async (reason, i) => {
   var params = {
@@ -40,9 +45,6 @@ const deleteSQSqueue = async (url) => {
   }
 };
 
-var sendJobId = new Set();
-var receivedJobId = new Set();
-var sentVideosNames = [];
 const mergeviddeos = async (path, secondfile, i, n) => {
   const content = fs.readFileSync(path, { encoding: "utf-8" });
 
@@ -81,6 +83,19 @@ const mergeviddeos = async (path, secondfile, i, n) => {
     // reader.getResult()
   ); // Get result after file ends
 };
+
+const sendSuccessResponse=async()=>{
+  var params = {
+    FunctionName: 'lambda_function_to_call_api', /* required */
+    Payload:JSON.stringify({
+      inputVideoName : process.env.inputVideoName,
+      outputVideoName : process.env.outputVideoName
+
+    })
+    
+  };
+   await lambda.invoke(params).promise();
+}
 
 const submitJob = (initialTime, endTime, i = 0, url, attempt) => {
   console.log(initialTime, " ", endTime);
@@ -147,6 +162,8 @@ const init = async () => {
   var params = {
     QueueName: uuidv4() /* required */,
   };
+  console.log("before queue")
+
   const data = await sqs.createQueue(params).promise();
   console.log(data);
 
@@ -155,14 +172,19 @@ const init = async () => {
   const app = Consumer.create({
     queueUrl: url,
     handleMessage: async (message) => {
+      console.log("received message",message);
+        console.log("receivedjobid",
+        Array.from(receivedJobId.values())
+        )
       if (sendJobId.has(message.Body)) {
         receivedJobId.add(message.Body);
         if (receivedJobId.size == sendJobId.size) {
           for (index = 0; index < sentVideosNames.length; index++) {
-            path = "./" + sentVideosNames[index];
-            secondpath = "./" + process.env.outputVideoName;
+            path = process.env.S3_MOUNT_DIRECTORY_OUTPUT+'/' + sentVideosNames[index];;
+            secondpath = process.env.S3_MOUNT_DIRECTORY_OUTPUT+'/' + process.env.outputVideoName;
             await mergeviddeos(path, secondpath, index, sentVideosNames.length - 1);
           }
+          await sendSuccessResponse();
           app.stop();
           await deleteSQSqueue(url);
         }
@@ -179,8 +201,10 @@ const init = async () => {
   });
 
   app.start();
+  var videoPath=process.env.S3_MOUNT_DIRECTORY_INPUT+'/'+process.env.inputVideoName
 
-  const promise = videoDuration("./sample.mkv");
+
+  const promise = videoDuration(videoPath);
   promise
     .then((duration) => {
       var initialTime = 0;
@@ -210,8 +234,11 @@ const init = async () => {
         );
         totalChildBatch++;
       }
+      console.log("sendjobid",
+      Array.from(sendJobId.values())
+      )
     })
-    .catch((e) => { //failed to get video duration
+    .catch(async (e) => { //failed to get video duration
       if (app) {
         app.stop();
       }
