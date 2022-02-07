@@ -133,6 +133,10 @@ const submitJob = (initialTime, endTime, i = 0, url, attempt) => {
           name: "url", //queue url
           value: url,
         },
+        {
+          name: "videoPath", //queue url
+          value: process.env.videoPath,
+        },
 
         /* more items */
       ],
@@ -193,8 +197,8 @@ const init = async () => {
           for (index = 0; index < sentVideosNames.length; index++) {
             if(! murgedVideos.has(sentVideosNames[index])){ // check if video is merged already.
 
-            path = process.env.S3_MOUNT_DIRECTORY_OUTPUT + "/" + sentVideosNames[index];
-            secondpath = process.env.S3_MOUNT_DIRECTORY_OUTPUT +"/" + process.env.outputVideoName;
+            path = process.env.S3_MOUNT_DIRECTORY_OUTPUT + "/"+process.env.videoPath + sentVideosNames[index];
+            secondpath = process.env.S3_MOUNT_DIRECTORY_OUTPUT +"/"+process.env.videoPath + process.env.outputVideoName;
             await mergeviddeos(
               path,
               secondpath,
@@ -225,7 +229,7 @@ const init = async () => {
 
   app.start();
   var videoPath =
-    process.env.S3_MOUNT_DIRECTORY_INPUT + "/" + process.env.inputVideoName;
+    process.env.S3_MOUNT_DIRECTORY_INPUT + "/"+ process.env.videoPath+ process.env.inputVideoName;
 
   const promise = videoDuration(videoPath);
   promise
