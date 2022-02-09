@@ -196,7 +196,7 @@ const init = async () => {
         receivedJobId.add(message.Body);
         if (receivedJobId.size == sendJobId.size) {
           console.log("size of received and sent id array are equal");
-          for(resolution=0;resolution<6;resolution++){
+          for(resolution=0;resolution<5;resolution++){
           for (index = 0; index < sentVideosNames.length; index++) {
             if(! murgedVideos.has(sentVideosNames[index])){ // check if video is merged already.
 
