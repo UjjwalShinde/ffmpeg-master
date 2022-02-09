@@ -15,6 +15,7 @@ var sendJobId = new Set();
 var receivedJobId = new Set();
 var sentVideosNames = [];
 var murgedVideos=new Set();
+var videoName;
 
 const cancelJob = async (reason, i) => {
   console.log("cancel job trigger");
@@ -169,6 +170,7 @@ const videoDuration = async (path) => {
 };
 
 const init = async () => {
+  videoName = process.env.outputVideoName.split('.')[0];
   var i = 0;
   var params = {
     QueueName: uuidv4() /* required */,
@@ -194,11 +196,12 @@ const init = async () => {
         receivedJobId.add(message.Body);
         if (receivedJobId.size == sendJobId.size) {
           console.log("size of received and sent id array are equal");
+          for(resolution=0;resolution<6;resolution++){
           for (index = 0; index < sentVideosNames.length; index++) {
             if(! murgedVideos.has(sentVideosNames[index])){ // check if video is merged already.
 
-            path = process.env.S3_MOUNT_DIRECTORY_OUTPUT + "/"+process.env.videoPath + sentVideosNames[index];
-            secondpath = process.env.S3_MOUNT_DIRECTORY_OUTPUT +"/"+process.env.videoPath + process.env.outputVideoName;
+            path = process.env.S3_MOUNT_DIRECTORY_OUTPUT + "/"+process.env.videoPath+ videoName+"/"+resolution+"/" + sentVideosNames[index];
+            secondpath = process.env.S3_MOUNT_DIRECTORY_OUTPUT +"/"+process.env.videoPath +  videoName+"/"+resolution+"/" +"prog_index.m3u8";
             await mergeviddeos(
               path,
               secondpath,
@@ -208,6 +211,7 @@ const init = async () => {
             murgedVideos.add(sentVideosNames[index]); //to track merged videos.
           
           }
+        }
           }
           await sendSuccessResponse();
           app.stop();
